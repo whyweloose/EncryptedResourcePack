@@ -4,5 +4,5 @@ resource_stack:
   - hypegoui.zip
   - HypeGOAssets.zip
   - HypeGOSphere.zip
-  - Auction.zip
+  - HypeGOAuction.zip
 force_resources: true
