@@ -20,27 +20,23 @@ use function count;
 use function file_exists;
 use function file_get_contents;
 use function file_put_contents;
-use function feof;
-use function fclose;
-use function fopen;
-use function fread;
 use function function_exists;
-use function fwrite;
 use function hash;
 use function hash_file;
 use function is_dir;
 use function is_file;
-use function is_resource;
 use function is_string;
 use function in_array;
+use function json_encode;
 use function mkdir;
 use function openssl_encrypt;
 use function random_bytes;
 use function rename;
 use function scandir;
+use function str_ends_with;
+use function strlen;
 use function strtolower;
 use function substr;
-use function strlen;
 use function preg_match;
 use function usort;
 use function unlink;
@@ -163,7 +159,7 @@ final class ResourcePackService
 		if ($sourceHash === false) {
 			throw new LogicException("Could not hash source resource pack: " . $sourcePath);
 		}
-		$cacheKey = hash("sha256", $sourceHash . "\0" . $key);
+		$cacheKey = hash("sha256", "bedrock-encrypted-zip-v1\0" . $sourceHash . "\0" . $key);
 		$base = hash("sha256", strtolower($packId));
 		$encryptedPath = $this->encryptedDirectory . $base . ".pack";
 		$metadataPath = $encryptedPath . ".meta";
@@ -172,7 +168,12 @@ final class ResourcePackService
 		}
 
 		$tempPath = $encryptedPath . ".tmp-" . bin2hex(random_bytes(6));
-		$this->encryptFile($sourcePath, $tempPath, $key);
+		try {
+			$this->encryptPackArchive($sourcePath, $tempPath, $packId, $key);
+		} catch (\Throwable $error) {
+			@unlink($tempPath);
+			throw $error;
+		}
 		if (!rename($tempPath, $encryptedPath)) {
 			@unlink($tempPath);
 			throw new LogicException("Could not replace encrypted resource pack: " . $encryptedPath);
@@ -183,53 +184,75 @@ final class ResourcePackService
 		return $encryptedPath;
 	}
 
-	private function encryptFile(string $sourcePath, string $destinationPath, string $key): void
+	private function encryptPackArchive(string $sourcePath, string $destinationPath, string $packId, string $key): void
 	{
-		$input = fopen($sourcePath, "rb");
-		$output = fopen($destinationPath, "wb");
-		if ($input === false || $output === false) {
-			if (is_resource($input)) {
-				fclose($input);
-			}
-			if (is_resource($output)) {
-				fclose($output);
-			}
-			throw new LogicException("Could not open resource pack files for encryption");
+		$input = new \ZipArchive();
+		$inputResult = $input->open($sourcePath);
+		if ($inputResult !== true) {
+			throw new LogicException("Could not open source resource pack ZIP (error " . $inputResult . ")");
+		}
+		$output = new \ZipArchive();
+		$outputResult = $output->open($destinationPath, \ZipArchive::CREATE | \ZipArchive::OVERWRITE);
+		if ($outputResult !== true) {
+			$input->close();
+			throw new LogicException("Could not create encrypted resource pack ZIP (error " . $outputResult . ")");
 		}
 
-		$iv = substr($key, 0, 16);
+		$contentEntries = [];
+		$excludedFiles = ["manifest.json", "pack_icon.png", "bug_pack_icon.png"];
+		$outputClosed = false;
 		try {
-			while (!feof($input)) {
-				$plain = fread($input, 1048576);
-				if ($plain === false) {
-					throw new LogicException("Could not read resource pack while encrypting");
-				}
-				if ($plain === "") {
+			for ($index = 0; $index < $input->numFiles; ++$index) {
+				$name = $input->getNameIndex($index);
+				if ($name === false || $name === "contents.json") {
 					continue;
 				}
-				$encrypted = openssl_encrypt($plain, "aes-256-cfb8", $key, OPENSSL_RAW_DATA, $iv);
-				if ($encrypted === false) {
-					throw new LogicException("OpenSSL failed to encrypt a resource pack");
+				if (str_ends_with($name, "/")) {
+					if (!$output->addEmptyDir($name)) {
+						throw new LogicException("Could not add resource pack directory: " . $name);
+					}
+					continue;
 				}
-				$this->writeAll($output, $encrypted);
-				$iv = substr($encrypted, -16);
+				$plain = $input->getFromIndex($index);
+				if ($plain === false) {
+					throw new LogicException("Could not read resource pack entry: " . $name);
+				}
+				if (in_array($name, $excludedFiles, true)) {
+					$entryKey = null;
+					$contents = $plain;
+				} else {
+					$entryKey = bin2hex(random_bytes(16));
+					$iv = substr($entryKey, 0, 16);
+					$contents = openssl_encrypt($plain, "aes-256-cfb8", $entryKey, OPENSSL_RAW_DATA, $iv);
+					if ($contents === false) {
+						throw new LogicException("OpenSSL failed to encrypt resource pack entry: " . $name);
+					}
+				}
+				if (!$output->addFromString($name, $contents)) {
+					throw new LogicException("Could not write resource pack entry: " . $name);
+				}
+				$contentEntries[] = ["path" => $name, "key" => $entryKey];
 			}
-		} finally {
-			fclose($input);
-			fclose($output);
-		}
-	}
 
-	private function writeAll($stream, string $data): void
-	{
-		$length = strlen($data);
-		$written = 0;
-		while ($written < $length) {
-			$count = fwrite($stream, substr($data, $written));
-			if ($count === false || $count === 0) {
-				throw new LogicException("Could not write encrypted resource pack");
+			$contentJson = json_encode(["content" => $contentEntries], JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);
+			$header = str_repeat("\x00", 16);
+			$header = substr($header, 0, 4) . "\xFC\xB9\xCF\x9B" . substr($header, 8);
+			$header = substr($header, 0, 16) . chr(strlen($packId)) . $packId;
+			$header = str_pad($header, 0x100, "\x00");
+			$contentsIv = substr($key, 0, 16);
+			$encryptedContent = openssl_encrypt($contentJson, "aes-256-cfb8", $key, OPENSSL_RAW_DATA, $contentsIv);
+			if ($encryptedContent === false || !$output->addFromString("contents.json", $header . $encryptedContent)) {
+				throw new LogicException("Could not write encrypted resource pack contents.json");
 			}
-			$written += $count;
+			if (!$output->close()) {
+				throw new LogicException("Could not finalize encrypted resource pack ZIP");
+			}
+			$outputClosed = true;
+		} finally {
+			if (!$outputClosed) {
+				$output->close();
+			}
+			$input->close();
 		}
 	}
 }
