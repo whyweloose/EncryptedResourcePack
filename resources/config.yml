@@ -1,0 +1,8 @@
+# Resource packs are loaded from the plugin data folder's packs/ directory.
+# Packs keep the same priority order as the previous bedrock_packs stack.
+resource_stack:
+  - hypegoui.zip
+  - HypeGOAssets.zip
+  - HypeGOSphere.zip
+  - Auction.zip
+force_resources: true

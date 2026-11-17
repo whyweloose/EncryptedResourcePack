@@ -1,0 +1,5 @@
+name: srcResourcesPack
+version: 1.0.0
+api: 3.28.0
+main: srcResourcesPack\ResourcesPackPlugin
+author: whyweloose
