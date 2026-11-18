@@ -16,6 +16,11 @@ final class ResourcePackListener implements Listener
 
 	public function onResourcePackOffer(PlayerResourcePackOfferEvent $event): void
 	{
+		$player = $event->getPlayer();
+		if ($player->getProtocolVersion() < $player->getServer()->getBedrockResourcePacksProtocol()) {
+			return;
+		}
+
 		$event->setResourcePacks($this->service->getResourcePacks(), $this->service->getEncryptionKeys());
 		$event->setMustAccept((bool) $this->service->getPlugin()->getConfig()->get("force_resources", true));
 	}

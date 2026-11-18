@@ -11,6 +11,7 @@
 - Шифрует архивы алгоритмом AES-256-CFB8 и передаёт ключ через API ресурс-паков Bedrock.
 - Сохраняет подготовленный шифротекст в `encrypted/` и пересоздаёт его при изменении архива или ключа.
 - Позволяет задать порядок паков и требовать их принятия от игрока.
+- Предлагает зашифрованные паки только Bedrock-клиентам с протоколом не ниже `resource-pack.minimal-bedrock-protocol` из `submarine.yml`; остальные клиенты получают штатные паки ядра.
 
 ## Требования
 
@@ -70,6 +71,7 @@ force_resources: true
 - Encrypts archives with AES-256-CFB8 and supplies the key through the Bedrock resource-pack API.
 - Caches encrypted files in `encrypted/` and rebuilds them when the source archive or key changes.
 - Lets you set pack order and require players to accept the packs.
+- Offers encrypted packs only to Bedrock clients at or above `resource-pack.minimal-bedrock-protocol` in `submarine.yml`; other clients keep the core's default packs.
 
 ## Requirements
 
